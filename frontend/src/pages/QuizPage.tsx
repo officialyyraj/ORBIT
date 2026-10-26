@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getMastery, getQuestions, submitResponse } from '../api/client'
+import { getLibrary, getMastery, getQuestions, getSelectedTrackId, setSelectedTrackId, submitResponse } from '../api/client'
 import QuizCard from '../components/QuizCard'
 
 export default function QuizPage() {
@@ -9,7 +9,16 @@ export default function QuizPage() {
   const diagnostic = !topicId
   const navigate = useNavigate()
   const client = useQueryClient()
-  const query = useQuery({ queryKey: ['questions', topicId || 'diagnostic'], queryFn: () => getQuestions(topicId) })
+  const library = useQuery({ queryKey: ['library'], queryFn: getLibrary, enabled: diagnostic })
+  const [chosenTrackId, setChosenTrackId] = useState(() => getSelectedTrackId() || '')
+  const trackId = library.data?.tracks.some(track => track.id === chosenTrackId)
+    ? chosenTrackId
+    : library.data?.tracks[0]?.id || ''
+  const query = useQuery({
+    queryKey: ['questions', topicId || 'diagnostic', diagnostic ? trackId : null],
+    queryFn: () => getQuestions(topicId, diagnostic ? trackId : undefined),
+    enabled: !diagnostic || Boolean(trackId),
+  })
   const mastery = useQuery({ queryKey: ['mastery'], queryFn: getMastery, enabled: !diagnostic })
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<{ before: number; after: number }[]>([])
@@ -19,9 +28,17 @@ export default function QuizPage() {
     setIndex(0)
     setFinished(false)
     setAnswers([])
-  }, [topicId])
+  }, [topicId, trackId])
 
-  if (query.isLoading || (!diagnostic && mastery.isLoading)) return <div className="loading">Preparing your questions…</div>
+  useEffect(() => {
+    if (diagnostic && trackId && chosenTrackId !== trackId) {
+      setChosenTrackId(trackId)
+      setSelectedTrackId(trackId)
+    }
+  }, [chosenTrackId, diagnostic, trackId])
+
+  if ((diagnostic && library.isLoading) || query.isLoading || (!diagnostic && mastery.isLoading)) return <div className="loading">Preparing your questions…</div>
+  if (diagnostic && library.error) return <div className="error-box">{(library.error as Error).message}</div>
   if (query.error) return <div className="error-box">{(query.error as Error).message}</div>
 
   const questions = query.data?.questions || []
@@ -48,5 +65,5 @@ export default function QuizPage() {
     }
   }
 
-  return <div className="page narrow"><div className="quiz-header"><Link to={diagnostic ? '/dashboard' : '/roadmap'} className="back-link">← Exit quiz</Link><div><span className="eyebrow">{diagnostic ? 'DIAGNOSTIC' : 'TOPIC CHECK'}</span><span className="progress-count">{index + 1} / {questions.length}</span></div></div><div className="quiz-progress"><div style={{ width: `${((index + 1) / questions.length) * 100}%` }} /></div><QuizCard key={question.id} question={question} onAnswer={answer} /><button className="primary-button next-button" onClick={next}>{index + 1 === questions.length ? 'Finish quiz' : 'Next question'} →</button></div>
+  return <div className="page narrow">{diagnostic && <label className="track-picker">Choose a track for your diagnostic <select value={trackId} onChange={event => { setChosenTrackId(event.target.value); setSelectedTrackId(event.target.value) }}>{library.data?.tracks.map(track => <option key={track.id} value={track.id}>{track.title}</option>)}</select></label>}<div className="quiz-header"><Link to={diagnostic ? '/dashboard' : '/roadmap'} className="back-link">← Exit quiz</Link><div><span className="eyebrow">{diagnostic ? 'DIAGNOSTIC' : 'TOPIC CHECK'}</span><span className="progress-count">{index + 1} / {questions.length}</span></div></div><div className="quiz-progress"><div style={{ width: `${((index + 1) / questions.length) * 100}%` }} /></div><QuizCard key={question.id} question={question} onAnswer={answer} /><button className="primary-button next-button" onClick={next}>{index + 1 === questions.length ? 'Finish quiz' : 'Next question'} →</button></div>
 }

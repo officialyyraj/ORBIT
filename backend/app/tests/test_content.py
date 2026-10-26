@@ -1,9 +1,12 @@
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
+import networkx as nx
 import pytest
 from app.content import import_library, validate_library
 from app.content_library import build_library
-from app.db.models import Base, MasteryEstimate, Question, Topic, Track, User
+from app.db.models import Base, MasteryEstimate, Question, Topic, TopicEdge, Track, User
+from app.kst.seed_data import connect_legacy_topics, seed
+from app.roadmap.astar import TopicState, generate_roadmap
 
 
 def test_library_batch_has_structured_topics_and_eight_questions_each():
@@ -14,6 +17,41 @@ def test_library_batch_has_structured_topics_and_eight_questions_each():
     assert validate_library(data) == []
 
 
+def test_cross_track_prerequisites_form_a_connected_dag():
+    data = build_library()
+    track_by_module = {module['id']: module['track_id'] for module in data['modules']}
+    track_by_slug = {topic['slug']: track_by_module[topic['module_id']] for topic in data['topics']}
+    graph = nx.DiGraph()
+    graph.add_nodes_from(track_by_slug)
+    edges = [
+        (prerequisite, topic['slug'])
+        for topic in data['topics']
+        for prerequisite in topic.get('prerequisites', [])
+    ]
+    graph.add_edges_from(edges)
+
+    assert nx.is_directed_acyclic_graph(graph)
+    assert any(track_by_slug[left] != track_by_slug[right] for left, right in edges)
+    assert nx.number_weakly_connected_components(graph) < 7
+
+
+def test_python_roadmap_includes_low_mastery_programming_foundations():
+    data = build_library()
+    graph = nx.DiGraph()
+    graph.add_nodes_from(topic['slug'] for topic in data['topics'])
+    graph.add_edges_from(
+        (prerequisite, topic['slug'])
+        for topic in data['topics']
+        for prerequisite in topic.get('prerequisites', [])
+    )
+    mastery = {topic: 0.1 for topic in graph}
+    states = {topic: TopicState(mastery=0.1, estimated_minutes=30) for topic in graph}
+
+    path = generate_roadmap(graph, mastery, states, 'py-values')
+
+    assert path.index('pf-variables') < path.index('py-values')
+
+
 def test_import_is_idempotent_and_preserves_learner_records():
     engine = create_engine('sqlite:///:memory:')
     Base.metadata.create_all(engine)
@@ -21,6 +59,13 @@ def test_import_is_idempotent_and_preserves_learner_records():
     try:
         data = build_library()
         first = import_library(session, data)
+        edge = session.scalar(
+            select(TopicEdge)
+            .join(Topic, Topic.id == TopicEdge.prerequisite_id)
+            .where(Topic.slug == 'pf-variables')
+        )
+        edge.confidence_score = .42
+        session.commit()
         student = User(email='learner@example.test', password_hash='not-a-real-hash')
         session.add(student); session.flush()
         topic = session.scalar(select(Topic).where(Topic.slug == 'py-values'))
@@ -32,6 +77,38 @@ def test_import_is_idempotent_and_preserves_learner_records():
         assert session.scalar(select(func.count()).select_from(Question)) == 712
         assert session.scalar(select(func.count()).select_from(Track)) == 6
         assert session.scalar(select(MasteryEstimate).where(MasteryEstimate.student_id == student.id)).p_mastery == .72
+        assert edge.confidence_score == .42
+    finally:
+        session.close(); engine.dispose()
+
+
+def test_seed_and_library_import_are_idempotent_without_deleting_legacy_history():
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        data = build_library()
+        seed(session)
+        import_library(session, data)
+        connect_legacy_topics(session)
+        first_counts = (
+            session.scalar(select(func.count()).select_from(Topic)),
+            session.scalar(select(func.count()).select_from(TopicEdge)),
+        )
+        legacy = session.scalar(select(Topic).where(Topic.name == 'Machine Learning'))
+        assert legacy.module_id is not None
+        assert 'legacy seed' in legacy.provenance
+
+        seed(session)
+        import_library(session, data)
+        connect_legacy_topics(session)
+        second_counts = (
+            session.scalar(select(func.count()).select_from(Topic)),
+            session.scalar(select(func.count()).select_from(TopicEdge)),
+        )
+
+        assert first_counts == second_counts
+        assert first_counts[0] == 95
     finally:
         session.close(); engine.dispose()
 

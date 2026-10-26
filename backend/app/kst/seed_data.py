@@ -75,3 +75,42 @@ def seed(db: Session):
     for name, value in [('Python Syntax', .88), ('Functions', .68), ('Recursion', .35), ('Trees', .25)]:
         db.add(MasteryEstimate(student_id=demo.id, topic_id=by_name[name].id, p_mastery=value, source='bkt'))
     db.commit()
+
+
+def connect_legacy_topics(db: Session):
+    """Keep historical seed topics visible in their closest track and connected to the library."""
+    module_by_name = {
+        'Python Syntax': 'py-core',
+        'Functions': 'py-core',
+        'Recursion': 'py-core',
+        'Trees': 'computer-science',
+        'Graphs': 'computer-science',
+        'Machine Learning': 'computer-science',
+    }
+    legacy = {
+        topic.name: topic
+        for topic in db.scalars(select(Topic).where(Topic.name.in_(module_by_name))).all()
+    }
+    for name, module_id in module_by_name.items():
+        topic = legacy.get(name)
+        if topic is not None:
+            topic.module_id = module_id
+            topic.provenance = 'ORBIT legacy seed; retained to preserve learner history'
+
+    prerequisite = db.scalar(select(Topic).where(Topic.slug == 'cs-graphs-overview'))
+    graph_topic = legacy.get('Graphs')
+    if prerequisite is not None and graph_topic is not None:
+        # The library graph overview is a foundation for the retained legacy graph-traversal topic.
+        edge = db.scalar(
+            select(TopicEdge).where(
+                TopicEdge.prerequisite_id == prerequisite.id,
+                TopicEdge.topic_id == graph_topic.id,
+            )
+        )
+        if edge is None:
+            db.add(TopicEdge(
+                prerequisite_id=prerequisite.id,
+                topic_id=graph_topic.id,
+                confidence_score=1.0,
+            ))
+    db.commit()
