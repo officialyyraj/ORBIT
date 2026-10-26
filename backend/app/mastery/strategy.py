@@ -71,6 +71,17 @@ class StrategySelector(MasteryStrategy):
         self.bkt = BKTStrategy()
         self.dkt = dkt or DKTStrategy()
 
+    def _checkpoint_compatible(self, db) -> bool:
+        settings = get_settings()
+        if not settings.dkt_checkpoint_path or not Path(settings.dkt_checkpoint_path).exists():
+            return False
+        if not hasattr(self.dkt, 'checkpoint_matches_graph'):
+            return True
+        try:
+            return self.dkt.checkpoint_matches_graph(db)
+        except Exception:
+            return False
+
     def _has_enough_interactions(self, db, student_id):
         settings = get_settings()
 
@@ -81,6 +92,9 @@ class StrategySelector(MasteryStrategy):
             return False
 
         if not Path(settings.dkt_checkpoint_path).exists():
+            return False
+
+        if not self._checkpoint_compatible(db):
             return False
 
         count = db.scalar(

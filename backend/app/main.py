@@ -8,8 +8,10 @@ import networkx as nx
 from app.auth.service import create_access_token, decode_access_token, get_user_by_email, hash_password, verify_password
 from app.config import get_settings
 from app.db.models import MasteryEstimate, Module, Question, QuizResponse, RoadmapCache, Topic, TopicEdge, Track, User
-from app.db.session import Base, engine, get_db
-from app.content import upgrade_content_schema
+from app.db.session import Base, SessionLocal, engine, get_db
+from app.content import import_library, upgrade_content_schema
+from app.content_library import build_library
+from app.kst.seed_data import connect_legacy_topics, seed
 from app.kst.service import load_graph
 from app.mastery.dkt import DKTStrategy
 from app.mastery.bkt import BKTParameters, default_parameters, update_mastery
@@ -18,6 +20,16 @@ from app.refinement.edge_confidence import low_confidence_edges, refine_all_edge
 from app.roadmap.astar import TopicState, generate_roadmap, objective_breakdown
 from app.roadmap.pareto import generate_pareto_paths
 from app.schemas import AuthRequest, AuthResponse, EdgeCreate, LabBKTRequest, LabDemoStepRequest, LabSearchRequest, ResponseCreate, TopicCreate
+
+def initialize_database() -> None:
+    upgrade_content_schema(engine)
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        seed(db)
+        import_library(db, build_library())
+        connect_legacy_topics(db)
+
+initialize_database()
 
 app = FastAPI(title='ORBIT API', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_set(), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
@@ -30,8 +42,7 @@ async def contract_http_exception_handler(request: Request, exc: HTTPException):
 
 @app.on_event('startup')
 def startup():
-    upgrade_content_schema(engine)
-    Base.metadata.create_all(bind=engine)
+    initialize_database()
 
 @app.get('/health')
 def health():
@@ -227,10 +238,32 @@ def question_payload(q: Question):
     return {'id': q.id, 'topic_id': q.topic_id, 'prompt': q.prompt, 'choices': q.choices, 'question_type':q.question_type, 'difficulty':q.difficulty, 'learning_objective':q.learning_objective}
 
 @app.get('/api/v1/quiz/diagnostic')
-def diagnostic(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    topics = db.scalars(select(Topic).order_by(Topic.name)).all(); questions = []
+def diagnostic(track_id: str | None = Query(default=None), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if track_id is not None:
+        track = db.get(Track, track_id)
+        if track is None:
+            error('not_found', 'Track not found', 404)
+        topics = db.scalars(
+            select(Topic)
+            .join(Module, Topic.module_id == Module.id)
+            .where(Module.track_id == track_id)
+            .order_by(Module.sort_order, Topic.name, Topic.id)
+        ).all()
+    else:
+        incoming_topic_ids = set(db.scalars(select(TopicEdge.topic_id)).all())
+        topics = [
+            topic
+            for topic in db.scalars(select(Topic).order_by(Topic.name, Topic.id)).all()
+            if topic.id not in incoming_topic_ids
+        ][:12]
+    questions = []
     for topic in topics:
-        q = db.scalars(select(Question).where(Question.topic_id == topic.id, Question.review_status == 'approved').limit(1)).first()
+        q = db.scalars(
+            select(Question)
+            .where(Question.topic_id == topic.id, Question.review_status == 'approved')
+            .order_by(Question.id)
+            .limit(1)
+        ).first()
         if q: questions.append(question_payload(q))
     return {'questions': questions}
 
@@ -288,9 +321,51 @@ def build_pareto_roadmap(user: User, db: Session, target_topic_id: str | None):
         paths.append({'label': label, 'path': path, 'objective_totals': {'mastery_deficit': score.mastery, 'retention_penalty': score.retention, 'time_cost': score.time}})
     return {'mode': 'pareto', 'paths': paths, 'computed_at': datetime.now(timezone.utc).isoformat()}
 
+def resolve_roadmap_target(db: Session, user: User, track_id: str | None, target_topic_id: str | None) -> str:
+    track = db.get(Track, track_id) if track_id is not None else None
+    if track_id is not None and track is None:
+        error('not_found', 'Track not found', 404)
+    if target_topic_id is not None:
+        if db.get(Topic, target_topic_id) is None:
+            error('not_found', 'Topic not found', 404)
+        return target_topic_id
+    if track is None:
+        track = db.scalar(select(Track).order_by(Track.sort_order, Track.id).limit(1))
+    if track is None:
+        error('not_found', 'No published learning tracks are available', 404)
+
+    graph, topics, _, mastery, _ = _roadmap_context(user, db)
+    modules = {module.id: module for module in db.scalars(select(Module)).all()}
+    track_topics = {
+        topic_id: topic
+        for topic_id, topic in topics.items()
+        if topic.module_id is not None
+        and topic.module_id in modules
+        and modules[topic.module_id].track_id == track.id
+    }
+    if not track_topics:
+        error('track_empty', 'Track has no topics', 404)
+
+    terminal_topics = [
+        topic_id
+        for topic_id in track_topics
+        if not any(successor in track_topics for successor in graph.successors(topic_id))
+    ]
+    candidates = terminal_topics or list(track_topics)
+    return min(
+        candidates,
+        key=lambda topic_id: (
+            mastery[topic_id],
+            -modules[track_topics[topic_id].module_id].sort_order,
+            (track_topics[topic_id].slug or track_topics[topic_id].name).casefold(),
+            topic_id,
+        ),
+    )
+
 @app.get('/api/v1/roadmap/me')
-def roadmap_me(target_topic_id: str | None = Query(default=None), mode: str = Query(default='weighted'), user: User = Depends(current_user), db: Session = Depends(get_db)):
+def roadmap_me(target_topic_id: str | None = Query(default=None), track_id: str | None = Query(default=None), mode: str = Query(default='weighted'), user: User = Depends(current_user), db: Session = Depends(get_db)):
     if mode not in {'weighted', 'pareto'}: error('invalid_mode', 'mode must be weighted or pareto', 400)
+    target_topic_id = resolve_roadmap_target(db, user, track_id, target_topic_id)
     cached = db.scalar(select(RoadmapCache).where(RoadmapCache.student_id == user.id, RoadmapCache.target_topic_id == target_topic_id, RoadmapCache.mode == mode))
     if cached: return cached.roadmap_json
     result = build_weighted_roadmap(user, db, target_topic_id) if mode == 'weighted' else build_pareto_roadmap(user, db, target_topic_id)

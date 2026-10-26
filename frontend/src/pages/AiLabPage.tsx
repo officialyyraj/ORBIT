@@ -30,12 +30,13 @@ function GraphCanvasInner({ graph, selected, onSelect, status = {}, search = '' 
       const inClosed = status.closed?.includes(node.id)
       const queryMatch = !search || node.name.toLowerCase().includes(search.toLowerCase()) || (node.track_name || '').toLowerCase().includes(search.toLowerCase())
       const statusLabel = masteryStatus === 'unknown' ? 'No observation' : masteryStatus === 'mastered' ? 'Mastered' : masteryStatus === 'partial' ? 'Partial' : 'Unmastered'
-      return { id:node.id, position:{x:point.x-102,y:point.y-38}, data:{label:<div className={`lab-flow-node ${queryMatch ? '' : 'dimmed'}`}><span className="lab-flow-title">{node.name}</span><span className="lab-flow-meta">{status.synthetic ? 'Synthetic' : node.track_name || 'Legacy topic'} · {statusLabel}{p != null ? ` · ${Math.round(p*100)}%` : ''}</span></div>}, style:{width:204,height:76,padding:0,background:'#0a0a0a',border:`${isSelected ? 2 : 1}px solid ${isSelected ? '#ff781f' : current ? '#ff8a45' : inOpen ? '#737373' : inClosed ? '#525252' : onRoute ? '#ff781f' : onSearchPath ? '#ff781f' : masteryStatus === 'mastered' ? '#4c9b70' : masteryStatus === 'partial' ? '#737373' : masteryStatus === 'unmastered' ? '#525252' : '#262626'}`,borderRadius:12,color:'#ffffff',boxShadow:current ? '0 0 0 4px #ff8a4533' : undefined,opacity:queryMatch ? 1 : .2} }
+      return { id:node.id, position:{x:point.x-102,y:point.y-38}, data:{label:<div className={`lab-flow-node ${queryMatch ? '' : 'dimmed'}`}><span className="lab-flow-title">{node.name}</span><span className="lab-flow-meta">{node.cross_track_context ? 'Cross-track context · ' : ''}{status.synthetic ? 'Synthetic' : node.track_name || 'Legacy topic'} · {statusLabel}{p != null ? ` · ${Math.round(p*100)}%` : ''}</span></div>}, style:{width:204,height:76,padding:0,background:'#0a0a0a',border:`${isSelected ? 2 : 1}px solid ${isSelected ? '#ff781f' : current ? '#ff8a45' : inOpen ? '#737373' : inClosed ? '#525252' : onRoute ? '#ff781f' : onSearchPath ? '#ff781f' : masteryStatus === 'mastered' ? '#4c9b70' : masteryStatus === 'partial' ? '#737373' : masteryStatus === 'unmastered' ? '#525252' : '#262626'}`,borderRadius:12,color:'#ffffff',boxShadow:current ? '0 0 0 4px #ff8a4533' : undefined,opacity:node.cross_track_context ? .78 : queryMatch ? 1 : .2} }
     })
     const focus = new Set([...(status.route || []),...(status.searchPath || [])])
     const edges = graph.edges.filter(e => visibleNodes.some(n => n.id === e.prerequisite_id) && visibleNodes.some(n => n.id === e.topic_id)).map(e => {
       const focused = focus.has(e.prerequisite_id) && focus.has(e.topic_id)
-      return {id:`${e.prerequisite_id}-${e.topic_id}`,source:e.prerequisite_id,target:e.topic_id,animated:focused,style:{stroke:focused ? '#ff781f' : '#737373',strokeWidth:focused ? 2.5 : 1.2,opacity:focus.size && !focused ? .28 : .8},label:''}
+      const crossTrack = visibleNodes.some(node => node.id === e.prerequisite_id && node.cross_track_context) || visibleNodes.some(node => node.id === e.topic_id && node.cross_track_context)
+      return {id:`${e.prerequisite_id}-${e.topic_id}`,source:e.prerequisite_id,target:e.topic_id,animated:focused,style:{stroke:focused ? '#ff781f' : '#737373',strokeWidth:focused ? 2.5 : 1.2,strokeDasharray:crossTrack ? '6 4' : undefined,opacity:focus.size && !focused ? .28 : .8},label:crossTrack ? 'cross-track' : ''}
     })
     return {nodes,edges}
   },[graph,selected,status,search])
@@ -60,15 +61,26 @@ function KnowledgeGraphView({graph}:{graph:LabGraph}) {
   useEffect(()=>{if(!selected && graph.nodes.length)setSelected(graph.nodes[0].id)},[graph,selected])
   const node=graph.nodes.find(n=>n.id===selected) || null
   const trackNames=Array.from(new Set(graph.nodes.map(n=>n.track_name || 'Legacy topic'))).sort()
-  const filteredGraph=useMemo(()=>({...graph,nodes:graph.nodes.filter(n=>{
-    if(track!=='all' && (n.track_name || 'Legacy topic')!==track)return false
-    if(observedOnly && !n.mastery_observed && n.mastery_source!=='dkt')return false
-    if(filter==='available' && n.availability!=='available')return false
-    if(filter==='blocked' && n.availability!=='blocked')return false
-    if(filter==='mastered' && n.mastery_status!=='mastered')return false
-    if(filter==='unknown' && n.mastery_status!=='unknown')return false
-    return true
-  })}),[graph,observedOnly,filter,track])
+  const filteredGraph=useMemo(()=>{
+    const selectedTrackIds=new Set(graph.nodes.filter(n=>n.track_name===track).map(n=>n.id))
+    const crossTrackIds=new Set<string>()
+    if(track!=='all') graph.edges.forEach(edge=>{
+      const prerequisiteSelected=selectedTrackIds.has(edge.prerequisite_id)
+      const topicSelected=selectedTrackIds.has(edge.topic_id)
+      if(prerequisiteSelected!==topicSelected)crossTrackIds.add(prerequisiteSelected?edge.topic_id:edge.prerequisite_id)
+    })
+    return {...graph,nodes:graph.nodes.flatMap(n=>{
+      const inTrack=track==='all'||selectedTrackIds.has(n.id)
+      const crossTrackContext=!inTrack&&crossTrackIds.has(n.id)
+      if(!inTrack&&!crossTrackContext)return []
+      if(observedOnly && !n.mastery_observed && n.mastery_source!=='dkt')return []
+      if(filter==='available' && n.availability!=='available')return []
+      if(filter==='blocked' && n.availability!=='blocked')return []
+      if(filter==='mastered' && n.mastery_status!=='mastered')return []
+      if(filter==='unknown' && n.mastery_status!=='unknown')return []
+      return [{...n,cross_track_context:crossTrackContext}]
+    })}
+  },[graph,observedOnly,filter,track])
   const ancestors=new Set<string>(); const downstream=new Set<string>();
   if(selected){let frontier=[selected];while(frontier.length){const id=frontier.pop()!;for(const edge of graph.edges.filter(e=>e.topic_id===id)){if(!ancestors.has(edge.prerequisite_id)){ancestors.add(edge.prerequisite_id);frontier.push(edge.prerequisite_id)}}} frontier=[selected];while(frontier.length){const id=frontier.pop()!;for(const edge of graph.edges.filter(e=>e.prerequisite_id===id)){if(!downstream.has(edge.topic_id)){downstream.add(edge.topic_id);frontier.push(edge.topic_id)}}}}
   const focus=[...ancestors,selected || '']

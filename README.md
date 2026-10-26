@@ -53,14 +53,18 @@ Sign up or log in, complete the diagnostic quiz, open the dashboard and roadmap,
 
 ## Structured learning library
 
-Use **Learning library** in the sidebar to browse the six initial tracks and study topic lessons before starting topic practice. The content is stored in the same `topics`/`topic_edges`/`questions` entities used by the existing BKT and roadmap flows. To repeat the deterministic, duplicate-safe seed/import after installing backend dependencies:
+Use **Learning library** in the sidebar to browse the six tracks and study topic lessons before starting topic practice. The 89-topic library now has cross-track prerequisite links between shared programming, Python, web, SQL, and computer-science foundations; the graph is validated as a DAG during import. The content is stored in the same `topics`/`topic_edges`/`questions` entities used by the existing BKT and roadmap flows.
+
+The diagnostic quiz accepts an optional `track_id` (for example, `/api/v1/quiz/diagnostic?track_id=python`) and presents one question per topic in that track. Without a track, it samples at most 12 graph-root topics. Roadmaps accept the same `track_id` at `/api/v1/roadmap/me`; when no target is supplied, ORBIT resolves a deterministic target within that track before checking its cache. The dashboard, roadmap, and diagnostic pages remember the learner's selected track.
+
+The duplicate-safe seed/import preserves existing edges' empirical confidence and learner records. The older six-topic seed graph is retained for its legacy quiz/mastery history, tagged with its closest track, and connected to the computer-science library rather than left as an orphan component. To repeat the deterministic seed/import after installing backend dependencies:
 
 ```bash
 cd backend
 PYTHONPATH=. python -m app.db.seed
 ```
 
-The expanded curriculum and its verified counts are documented in `CONTENT_LIBRARY_STATUS.md`. The importer performs structural checks, is idempotent, and does not delete learner records.
+The expanded curriculum is documented in `CONTENT_LIBRARY_STATUS.md`. The importer performs structural checks, is idempotent, and does not delete learner records.
 
 ## AI Lab
 

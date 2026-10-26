@@ -40,6 +40,21 @@ _ROWS = [
 ('git-remotes','Remote Repositories and Synchronization','git-core',35,'Exchange commits with remote repositories while keeping local history understandable.', ['Distinguish fetch, pull, and push.','Check remote-tracking state before synchronization.'], ['git-branches'], 'A remote is a named reference to another repository location. fetch downloads objects and updates remote-tracking references without merging into the current branch. pull fetches and then integrates according to configuration (commonly merge or rebase). push sends local commits to a remote, subject to permissions and history rules. Inspect status and the target branch before synchronization.', [('remote','A remote names another repository and its fetch/push configuration.'),('fetch','git fetch downloads updates without integrating them into the current branch.'),('pull','git pull fetches and then integrates remote changes.'),('push','git push publishes local commits to a remote branch when allowed.')]),
 ]
 
+# Cross-track edges connect shared foundations to the first dependent concepts.
+_CROSS_TRACK_EDGES = [
+    ('pf-variables', 'py-values'),  # Named values in programming foundations prepare learners for Python values and expressions.
+    ('pf-conditionals', 'py-branching'),  # General Boolean branching transfers directly to Python conditional control flow.
+    ('pf-loops', 'py-while-loops'),  # Iteration and loop-state reasoning prepare learners for Python while loops.
+    ('pf-functions-overview', 'py-functions'),  # Reusable behavior and contracts are the conceptual basis for Python functions.
+    ('pf-data-overview', 'sql-select'),  # Shared data representations help learners interpret table rows and columns.
+    ('pf-data-overview', 'sql-keys'),  # Data types and collections give context for uniqueness and relationships in relational keys.
+    ('py-values', 'web-javascript-overview'),  # Values, expressions, and types transfer from Python to JavaScript fundamentals.
+    ('py-functions', 'web-dom-events'),  # Browser event handlers rely on the callable-function concept learned in Python.
+    ('py-lists', 'cs-arrays-lists'),  # Python sequences provide a concrete bridge to arrays and list data structures.
+    ('py-lists', 'cs-big-o'),  # Sequence operations make the input-size costs in Big-O analysis concrete.
+    ('py-dictionaries', 'cs-graphs-overview'),  # Keyed collections provide a practical basis for graph adjacency maps.
+]
+
 def build_library():
     modules = [dict(item) for item in MODULES]
     topics = []
@@ -65,4 +80,8 @@ def build_library():
             ]:
                 questions.append({'prompt':prompt, 'choices':ordered, 'correct':correct_index, 'difficulty':round(.2 + .08 * ((i + variant) % 5), 2), 'type':kind, 'explanation':correct_statement + (' This matters because it guides correct prediction and implementation.' if not variant else ' Apply this rule to the example, then check that each condition in the rule is satisfied.'), 'learning_objective':objective, 'distractor_explanations':[{'choice':d,'feedback':'This describes a different concept or reverses the rule; compare it with the stated learning objective.'} for j,d in enumerate(ordered) if j != correct_index]})
         topics.append({'slug':slug,'title':title,'module_id':module,'minutes':minutes,'summary':summary,'objectives':objectives,'prerequisites':prereqs,'explanation':explanation,'terminology':[{'term':term.replace('-', ' '),'definition':definition} for term,definition in facts],'worked_examples':[{'title':'Reason through a small case','steps':[facts[0][1],facts[1][1],facts[2][1]],'takeaway':facts[3][1]}], 'exercises':[{'prompt':f'Explain in your own words: {facts[i][1]}','success_criteria':'State the key rule and demonstrate it with a small example.'} for i in range(2)], 'misconceptions':[{'claim':f'Common misconception: {facts[i][1]}','correction':f'Use this precise rule instead: {facts[(i+1)%4][1]}'} for i in range(2)],'mastery_criteria':['Explain the key terms without relying on memorized wording.','Apply the rules to a new example and justify the result.','Identify and correct a representative misconception.'],'questions':questions,'review_status':'approved','provenance':'ORBIT original authored learning content'})
-    return extend_library({'tracks':[dict(item) for item in TRACKS], 'modules':modules, 'topics':topics})
+    library = extend_library({'tracks':[dict(item) for item in TRACKS], 'modules':modules, 'topics':topics})
+    by_slug = {topic['slug']: topic for topic in library['topics']}
+    for prerequisite, topic_slug in _CROSS_TRACK_EDGES:
+        by_slug[topic_slug]['prerequisites'].append(prerequisite)
+    return library

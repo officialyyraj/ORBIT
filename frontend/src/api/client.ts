@@ -11,7 +11,7 @@ export type ParetoPath = { label: string; path: RoadmapNode[]; objective_totals:
 export type ParetoRoadmap = { mode: 'pareto'; paths: ParetoPath[]; computed_at: string }
 export type Roadmap = WeightedRoadmap | ParetoRoadmap
 export type EdgeReview = { edge_id: string; prerequisite_id: string; prerequisite_name: string; topic_id: string; topic_name: string; confidence_score: number; positive_gap: number; sample_count: number }
-export type LabNode = { id: string; slug: string | null; name: string; description: string; module_id: string | null; module_name: string | null; track_id: string | null; track_name: string | null; difficulty: string; estimated_minutes: number; mastery_probability: number | null; mastery_observed: boolean; mastery_source: string | null; mastery_status: 'unknown' | 'unmastered' | 'partial' | 'mastered'; availability: 'available' | 'blocked' | 'unknown'; prerequisite_ids: string[]; dependent_ids: string[] }
+export type LabNode = { id: string; slug: string | null; name: string; description: string; module_id: string | null; module_name: string | null; track_id: string | null; track_name: string | null; difficulty: string; estimated_minutes: number; mastery_probability: number | null; mastery_observed: boolean; mastery_source: string | null; mastery_status: 'unknown' | 'unmastered' | 'partial' | 'mastered'; availability: 'available' | 'blocked' | 'unknown'; prerequisite_ids: string[]; dependent_ids: string[]; cross_track_context?: boolean }
 export type LabGraph = { nodes: LabNode[]; edges: Edge[]; bkt_parameters: { p_init: number; p_transit: number; p_slip: number; p_guess: number }; diagnostics: { missing_edge_nodes: { prerequisite_id: string; topic_id: string }[]; is_dag: boolean; formal_knowledge_space_claim: false; note: string } }
 export type BKTTrace = { prior_mastery: number; observed_response: 'correct' | 'incorrect'; probability_response_if_known: number; probability_response_if_unknown: number; weighted_known_likelihood: number; weighted_unknown_likelihood: number; observation_posterior: number; learning_transition: number; final_mastery: number; interpretation: string }
 export type SearchEvent = { type: string; step?: number; current_node?: string; start_nodes?: string[]; target?: string; g?: number; h?: number; f?: number; selected?: string; target_reached?: boolean; search_path?: string[]; open_before?: { topic_id: string; f: number; g: number }[]; open_after?: { topic_id: string; f: number; g: number }[]; closed_before?: string[]; closed_after?: string[]; candidates?: { topic_id: string; eligible: boolean; reason?: string; g?: number; h?: number; f?: number }[]; message?: string }
@@ -21,6 +21,8 @@ export type LabDemoResult = { mode: 'synthetic_integrated_demo'; persisted: fals
 export function getToken() { return localStorage.getItem('orbit_token') }
 export function setToken(token: string) { localStorage.setItem('orbit_token', token) }
 export function clearToken() { localStorage.removeItem('orbit_token'); localStorage.removeItem('orbit_user_id') }
+export function getSelectedTrackId() { return localStorage.getItem('orbit_track_id') }
+export function setSelectedTrackId(trackId: string) { localStorage.setItem('orbit_track_id', trackId) }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
@@ -42,8 +44,8 @@ export const labDemoStep = (body: { topic_id: string; correct?: boolean; questio
 export const getLibrary = () => api<{ tracks: LibraryTrack[] }>('/api/v1/content/library')
 export const getLesson = (topicIdOrSlug: string) => api<Lesson>(`/api/v1/content/topics/${encodeURIComponent(topicIdOrSlug)}`)
 export const getMastery = () => api<{ estimates: Mastery[] }>('/api/v1/mastery/me')
-export const getRoadmap = (mode: 'weighted' | 'pareto' = 'weighted') => api<Roadmap>(`/api/v1/roadmap/me?mode=${mode}`)
-export const getQuestions = (topicId?: string) => api<{ questions: Question[] }>(topicId ? `/api/v1/quiz/topic/${topicId}` : '/api/v1/quiz/diagnostic')
+export const getRoadmap = (mode: 'weighted' | 'pareto' = 'weighted', trackId?: string) => api<Roadmap>(`/api/v1/roadmap/me?mode=${mode}${trackId ? `&track_id=${encodeURIComponent(trackId)}` : ''}`)
+export const getQuestions = (topicId?: string, trackId?: string) => api<{ questions: Question[] }>(topicId ? `/api/v1/quiz/topic/${topicId}` : `/api/v1/quiz/diagnostic${trackId ? `?track_id=${encodeURIComponent(trackId)}` : ''}`)
 export const submitResponse = (question_id: string, selected_choice_index: number) => api<{ correct: boolean; correct_choice_index: number; explanation: string; distractor_explanations: { choice: string; feedback: string }[]; updated_mastery: { topic_id: string; p_mastery: number; source: string } }>('/api/v1/quiz/response', { method: 'POST', body: JSON.stringify({ question_id, selected_choice_index }) })
 export const getEdgeReview = () => api<{ threshold: number; edges: EdgeReview[] }>('/api/v1/admin/edges/low-confidence')
 export const refineEdges = () => api<{ updated_edges: number; edges: unknown[] }>('/api/v1/kst/edges/refine', { method: 'POST' })
