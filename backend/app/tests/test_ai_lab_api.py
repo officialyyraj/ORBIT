@@ -1,14 +1,11 @@
 import uuid
 from sqlalchemy import func, select
-from fastapi.testclient import TestClient
-from app.main import app
 from app.db.models import MasteryEstimate, QuizResponse
 from app.db.session import SessionLocal
 from app.mastery.bkt import default_parameters, update_mastery
 
 
-def test_ai_lab_uses_real_graph_bkt_astar_and_keeps_demo_stateless():
-    client = TestClient(app)
+def test_ai_lab_uses_real_graph_bkt_astar_and_keeps_demo_stateless(client):
     email = f"ai-lab-{uuid.uuid4().hex}@example.test"
     auth = client.post('/api/v1/auth/signup', json={'email':email,'password':'lab-test-password'})
     assert auth.status_code == 201
@@ -53,16 +50,14 @@ def test_ai_lab_uses_real_graph_bkt_astar_and_keeps_demo_stateless():
         assert db.scalar(select(func.count()).select_from(MasteryEstimate).where(MasteryEstimate.student_id == auth.json()['user_id'])) == mastery_before
 
 
-def test_ai_lab_routes_require_authentication_and_validate_probabilities():
-    client = TestClient(app)
+def test_ai_lab_routes_require_authentication_and_validate_probabilities(client):
     assert client.get('/api/v1/ai-lab/graph').status_code == 401
     auth = client.post('/api/v1/auth/signup', json={'email':f"ai-lab-invalid-{uuid.uuid4().hex}@example.test",'password':'lab-test-password'})
     headers = {'Authorization':f"Bearer {auth.json()['token']}"}
     assert client.post('/api/v1/ai-lab/bkt/step', headers=headers, json={'prior_mastery':1.1,'correct':True}).status_code == 422
 
 
-def test_integrated_demo_scores_a_published_choice_without_persisting_it():
-    client = TestClient(app)
+def test_integrated_demo_scores_a_published_choice_without_persisting_it(client):
     email = f"ai-lab-question-{uuid.uuid4().hex}@example.test"
     auth = client.post('/api/v1/auth/signup', json={'email':email,'password':'lab-test-password'})
     headers = {'Authorization':f"Bearer {auth.json()['token']}"}

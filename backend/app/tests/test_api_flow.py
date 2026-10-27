@@ -1,9 +1,6 @@
-from fastapi.testclient import TestClient
-from app.main import app
 import uuid
 
-def test_seeded_full_flow():
-    client = TestClient(app)
+def test_seeded_full_flow(client):
     login = client.post('/api/v1/auth/login', json={'email': 'demo@orbit.dev', 'password': 'orbit-demo'})
     assert login.status_code == 200
     token = login.json()['token']
@@ -24,8 +21,7 @@ def test_seeded_full_flow():
     assert isinstance(roadmap.json()['path'], list)
 
 
-def test_diagnostic_is_track_scoped_bounded_and_reports_unknown_tracks():
-    client = TestClient(app)
+def test_diagnostic_is_track_scoped_bounded_and_reports_unknown_tracks(client):
     auth = client.post(
         '/api/v1/auth/signup',
         json={'email': f'diagnostic-{uuid.uuid4().hex}@example.test', 'password': 'diagnostic-test-password'},
@@ -53,8 +49,7 @@ def test_diagnostic_is_track_scoped_bounded_and_reports_unknown_tracks():
     assert unknown.json()['error']['code'] == 'not_found'
 
 
-def test_default_roadmap_target_is_track_scoped_and_deterministic():
-    client = TestClient(app)
+def test_default_roadmap_target_is_track_scoped_and_deterministic(client):
     auth = client.post(
         '/api/v1/auth/signup',
         json={'email': f'roadmap-track-{uuid.uuid4().hex}@example.test', 'password': 'roadmap-test-password'},

@@ -188,10 +188,7 @@ def test_import_rejects_invalid_batch_before_writing():
         session.close(); engine.dispose()
 
 
-def test_library_and_lesson_api_integrate_with_existing_quiz_flow():
-    from fastapi.testclient import TestClient
-    from app.main import app
-    client = TestClient(app)
+def test_library_and_lesson_api_integrate_with_existing_quiz_flow(client):
     library = client.get('/api/v1/content/library')
     assert library.status_code == 200
     tracks = library.json()['tracks']
