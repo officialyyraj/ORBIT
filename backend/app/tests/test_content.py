@@ -4,7 +4,7 @@ import networkx as nx
 import pytest
 from app.content import import_library, validate_library
 from app.content_library import build_library
-from app.db.models import Base, MasteryEstimate, Question, Topic, TopicEdge, Track, User
+from app.db.models import Base, MasteryEstimate, Module, Question, Topic, TopicEdge, Track, User
 from app.kst.seed_data import connect_legacy_topics, seed
 from app.roadmap.astar import TopicState, generate_roadmap
 
@@ -126,6 +126,35 @@ def test_seed_and_library_import_are_idempotent_without_deleting_legacy_history(
         assert first_counts[0] == 95
     finally:
         session.close(); engine.dispose()
+
+
+def test_fresh_seed_references_all_exist_with_sqlite_foreign_keys_enabled():
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        seed(session)
+        import_library(session, build_library())
+        connect_legacy_topics(session)
+
+        assert session.connection().exec_driver_sql('PRAGMA foreign_keys').scalar_one() == 1
+        missing_topic_modules = session.scalar(
+            select(func.count())
+            .select_from(Topic)
+            .outerjoin(Module, Topic.module_id == Module.id)
+            .where(Topic.module_id.is_not(None), Module.id.is_(None))
+        )
+        missing_module_tracks = session.scalar(
+            select(func.count())
+            .select_from(Module)
+            .outerjoin(Track, Module.track_id == Track.id)
+            .where(Track.id.is_(None))
+        )
+        assert missing_topic_modules == 0
+        assert missing_module_tracks == 0
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def test_validator_rejects_near_duplicate_question_prompts():
