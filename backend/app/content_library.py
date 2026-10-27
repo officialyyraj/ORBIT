@@ -84,4 +84,8 @@ def build_library():
     by_slug = {topic['slug']: topic for topic in library['topics']}
     for prerequisite, topic_slug in _CROSS_TRACK_EDGES:
         by_slug[topic_slug]['prerequisites'].append(prerequisite)
+    track_ids = {track['id'] for track in library['tracks']}
+    module_by_id = {module['id']: module for module in library['modules']}
+    assert all(module['track_id'] in track_ids for module in library['modules'])
+    assert all(topic['module_id'] in module_by_id for topic in library['topics'])
     return library

@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.models import Topic, TopicEdge, Question, User, MasteryEstimate
+from app.db.models import Module, Topic, TopicEdge, Question, User, MasteryEstimate
 from app.auth.service import hash_password
 
 TOPICS = [
@@ -79,22 +79,34 @@ def seed(db: Session):
 
 def connect_legacy_topics(db: Session):
     """Keep historical seed topics visible in their closest track and connected to the library."""
-    module_by_name = {
+    module_id_by_name = {
         'Python Syntax': 'py-core',
         'Functions': 'py-core',
-        'Recursion': 'py-core',
-        'Trees': 'computer-science',
-        'Graphs': 'computer-science',
-        'Machine Learning': 'computer-science',
+        'Recursion': 'cs-recursion',
+        'Trees': 'cs-structures',
+        'Graphs': 'cs-graphs',
+        'Machine Learning': 'cs-systems',
     }
+    modules = {
+        module.id: module
+        for module in db.scalars(
+            select(Module).where(Module.id.in_(module_id_by_name.values()))
+        ).all()
+    }
+    for name, module_id in module_id_by_name.items():
+        if module_id not in modules:
+            raise ValueError(
+                f"Cannot connect legacy topic '{name}': module '{module_id}' is missing"
+            )
+
     legacy = {
         topic.name: topic
-        for topic in db.scalars(select(Topic).where(Topic.name.in_(module_by_name))).all()
+        for topic in db.scalars(select(Topic).where(Topic.name.in_(module_id_by_name))).all()
     }
-    for name, module_id in module_by_name.items():
+    for name, module_id in module_id_by_name.items():
         topic = legacy.get(name)
         if topic is not None:
-            topic.module_id = module_id
+            topic.module_id = modules[module_id].id
             topic.provenance = 'ORBIT legacy seed; retained to preserve learner history'
 
     prerequisite = db.scalar(select(Topic).where(Topic.slug == 'cs-graphs-overview'))

@@ -98,6 +98,21 @@ def test_seed_and_library_import_are_idempotent_without_deleting_legacy_history(
         legacy = session.scalar(select(Topic).where(Topic.name == 'Machine Learning'))
         assert legacy.module_id is not None
         assert 'legacy seed' in legacy.provenance
+        assert {
+            topic.name: topic.module_id
+            for topic in session.scalars(
+                select(Topic).where(Topic.name.in_([
+                    'Python Syntax', 'Functions', 'Recursion', 'Trees', 'Graphs', 'Machine Learning',
+                ]))
+            )
+        } == {
+            'Python Syntax': 'py-core',
+            'Functions': 'py-core',
+            'Recursion': 'cs-recursion',
+            'Trees': 'cs-structures',
+            'Graphs': 'cs-graphs',
+            'Machine Learning': 'cs-systems',
+        }
 
         seed(session)
         import_library(session, data)
