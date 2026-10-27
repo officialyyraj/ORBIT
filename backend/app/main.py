@@ -1,4 +1,7 @@
+from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import datetime, timezone
+import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,17 +24,38 @@ from app.roadmap.astar import TopicState, generate_roadmap, objective_breakdown
 from app.roadmap.pareto import generate_pareto_paths
 from app.schemas import AuthRequest, AuthResponse, EdgeCreate, LabBKTRequest, LabDemoStepRequest, LabSearchRequest, ResponseCreate, TopicCreate
 
+logger = logging.getLogger(__name__)
+
+
+def _initialize_step(name: str, operation: Callable[[], object]) -> None:
+    try:
+        operation()
+    except Exception as exc:
+        logger.exception(
+            'Database initialization failed during %s; row parameters=%r: %s',
+            name,
+            getattr(exc, 'params', None),
+            exc,
+        )
+        raise RuntimeError(f'Database initialization failed during {name}: {exc}') from exc
+
+
 def initialize_database() -> None:
-    upgrade_content_schema(engine)
-    Base.metadata.create_all(bind=engine)
+    _initialize_step('content schema upgrade', lambda: upgrade_content_schema(engine))
+    _initialize_step('table creation', lambda: Base.metadata.create_all(bind=engine))
     with SessionLocal() as db:
-        seed(db)
-        import_library(db, build_library())
-        connect_legacy_topics(db)
+        _initialize_step('legacy topic seed', lambda: seed(db))
+        _initialize_step('content library import', lambda: import_library(db, build_library()))
+        _initialize_step('legacy topic linking', lambda: connect_legacy_topics(db))
 
-initialize_database()
 
-app = FastAPI(title='ORBIT API', version='1.0.0')
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title='ORBIT API', version='1.0.0', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origin_set(), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 strategy = StrategySelector(DKTStrategy(get_settings().dkt_checkpoint_path))
 
@@ -39,10 +63,6 @@ strategy = StrategySelector(DKTStrategy(get_settings().dkt_checkpoint_path))
 async def contract_http_exception_handler(request: Request, exc: HTTPException):
     detail = exc.detail if isinstance(exc.detail, dict) and 'error' in exc.detail else {'error': {'code': 'http_error', 'message': str(exc.detail)}}
     return JSONResponse(status_code=exc.status_code, content=detail)
-
-@app.on_event('startup')
-def startup():
-    initialize_database()
 
 @app.get('/health')
 def health():

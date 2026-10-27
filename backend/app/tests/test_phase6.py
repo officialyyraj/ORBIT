@@ -1,7 +1,5 @@
 from types import SimpleNamespace
 import networkx as nx
-from fastapi.testclient import TestClient
-from app.main import app
 from app.mastery.dkt import DKTStrategy
 from app.refinement import edge_confidence
 from app.roadmap.astar import TopicState
@@ -47,8 +45,7 @@ def test_dkt_initializes_from_kst_and_round_trips_checkpoint(tmp_path):
         assert loaded.embeddings.shape == model.embeddings.shape
 
 
-def test_phase6_admin_and_pareto_api():
-    client = TestClient(app)
+def test_phase6_admin_and_pareto_api(client):
     login = client.post('/api/v1/auth/login', json={'email': 'demo@orbit.dev', 'password': 'orbit-demo'})
     token = login.json()['token']
     headers = {'Authorization': f'Bearer {token}'}

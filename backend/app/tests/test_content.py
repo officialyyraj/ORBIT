@@ -4,8 +4,8 @@ import networkx as nx
 import pytest
 from app.content import import_library, validate_library
 from app.content_library import build_library
-from app.db.models import Base, MasteryEstimate, Question, Topic, TopicEdge, Track, User
-from app.kst.seed_data import connect_legacy_topics, seed
+from app.db.models import Base, MasteryEstimate, Module, Question, Topic, TopicEdge, Track, User
+from app.kst.seed_data import LEGACY_MODULE_ID_BY_NAME, connect_legacy_topics, seed
 from app.roadmap.astar import TopicState, generate_roadmap
 
 
@@ -15,6 +15,15 @@ def test_library_batch_has_structured_topics_and_eight_questions_each():
     assert len(data['topics']) == 89
     assert all(8 <= len(topic['questions']) <= 12 for topic in data['topics'])
     assert validate_library(data) == []
+
+
+def test_seed_literal_references_exist_in_library_definitions():
+    data = build_library()
+    module_ids = {module['id'] for module in data['modules']}
+    topic_slugs = {topic['slug'] for topic in data['topics']}
+
+    assert set(LEGACY_MODULE_ID_BY_NAME.values()) <= module_ids
+    assert 'cs-graphs-overview' in topic_slugs
 
 
 def test_cross_track_prerequisites_form_a_connected_dag():
@@ -98,6 +107,21 @@ def test_seed_and_library_import_are_idempotent_without_deleting_legacy_history(
         legacy = session.scalar(select(Topic).where(Topic.name == 'Machine Learning'))
         assert legacy.module_id is not None
         assert 'legacy seed' in legacy.provenance
+        assert {
+            topic.name: topic.module_id
+            for topic in session.scalars(
+                select(Topic).where(Topic.name.in_([
+                    'Python Syntax', 'Functions', 'Recursion', 'Trees', 'Graphs', 'Machine Learning',
+                ]))
+            )
+        } == {
+            'Python Syntax': 'py-core',
+            'Functions': 'py-core',
+            'Recursion': 'cs-recursion',
+            'Trees': 'cs-structures',
+            'Graphs': 'cs-graphs',
+            'Machine Learning': 'cs-systems',
+        }
 
         seed(session)
         import_library(session, data)
@@ -111,6 +135,35 @@ def test_seed_and_library_import_are_idempotent_without_deleting_legacy_history(
         assert first_counts[0] == 95
     finally:
         session.close(); engine.dispose()
+
+
+def test_fresh_seed_references_all_exist_with_sqlite_foreign_keys_enabled():
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        seed(session)
+        import_library(session, build_library())
+        connect_legacy_topics(session)
+
+        assert session.connection().exec_driver_sql('PRAGMA foreign_keys').scalar_one() == 1
+        missing_topic_modules = session.scalar(
+            select(func.count())
+            .select_from(Topic)
+            .outerjoin(Module, Topic.module_id == Module.id)
+            .where(Topic.module_id.is_not(None), Module.id.is_(None))
+        )
+        missing_module_tracks = session.scalar(
+            select(func.count())
+            .select_from(Module)
+            .outerjoin(Track, Module.track_id == Track.id)
+            .where(Track.id.is_(None))
+        )
+        assert missing_topic_modules == 0
+        assert missing_module_tracks == 0
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def test_validator_rejects_near_duplicate_question_prompts():
@@ -144,10 +197,7 @@ def test_import_rejects_invalid_batch_before_writing():
         session.close(); engine.dispose()
 
 
-def test_library_and_lesson_api_integrate_with_existing_quiz_flow():
-    from fastapi.testclient import TestClient
-    from app.main import app
-    client = TestClient(app)
+def test_library_and_lesson_api_integrate_with_existing_quiz_flow(client):
     library = client.get('/api/v1/content/library')
     assert library.status_code == 200
     tracks = library.json()['tracks']
