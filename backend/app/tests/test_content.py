@@ -5,7 +5,7 @@ import pytest
 from app.content import import_library, validate_library
 from app.content_library import build_library
 from app.db.models import Base, MasteryEstimate, Module, Question, Topic, TopicEdge, Track, User
-from app.kst.seed_data import connect_legacy_topics, seed
+from app.kst.seed_data import LEGACY_MODULE_ID_BY_NAME, connect_legacy_topics, seed
 from app.roadmap.astar import TopicState, generate_roadmap
 
 
@@ -15,6 +15,15 @@ def test_library_batch_has_structured_topics_and_eight_questions_each():
     assert len(data['topics']) == 89
     assert all(8 <= len(topic['questions']) <= 12 for topic in data['topics'])
     assert validate_library(data) == []
+
+
+def test_seed_literal_references_exist_in_library_definitions():
+    data = build_library()
+    module_ids = {module['id'] for module in data['modules']}
+    topic_slugs = {topic['slug'] for topic in data['topics']}
+
+    assert set(LEGACY_MODULE_ID_BY_NAME.values()) <= module_ids
+    assert 'cs-graphs-overview' in topic_slugs
 
 
 def test_cross_track_prerequisites_form_a_connected_dag():

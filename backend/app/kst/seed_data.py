@@ -55,6 +55,14 @@ QUESTIONS = {
         ('Classification predicts:', ['Discrete labels', 'Only continuous numbers', 'Graph edges only', 'SQL rows'], 0, 0.5),
     ],
 }
+LEGACY_MODULE_ID_BY_NAME = {
+    'Python Syntax': 'py-core',
+    'Functions': 'py-core',
+    'Recursion': 'cs-recursion',
+    'Trees': 'cs-structures',
+    'Graphs': 'cs-graphs',
+    'Machine Learning': 'cs-systems',
+}
 
 def seed(db: Session):
     existing = db.scalar(select(Topic).limit(1))
@@ -79,21 +87,13 @@ def seed(db: Session):
 
 def connect_legacy_topics(db: Session):
     """Keep historical seed topics visible in their closest track and connected to the library."""
-    module_id_by_name = {
-        'Python Syntax': 'py-core',
-        'Functions': 'py-core',
-        'Recursion': 'cs-recursion',
-        'Trees': 'cs-structures',
-        'Graphs': 'cs-graphs',
-        'Machine Learning': 'cs-systems',
-    }
     modules = {
         module.id: module
         for module in db.scalars(
-            select(Module).where(Module.id.in_(module_id_by_name.values()))
+            select(Module).where(Module.id.in_(LEGACY_MODULE_ID_BY_NAME.values()))
         ).all()
     }
-    for name, module_id in module_id_by_name.items():
+    for name, module_id in LEGACY_MODULE_ID_BY_NAME.items():
         if module_id not in modules:
             raise ValueError(
                 f"Cannot connect legacy topic '{name}': module '{module_id}' is missing"
@@ -101,9 +101,9 @@ def connect_legacy_topics(db: Session):
 
     legacy = {
         topic.name: topic
-        for topic in db.scalars(select(Topic).where(Topic.name.in_(module_id_by_name))).all()
+        for topic in db.scalars(select(Topic).where(Topic.name.in_(LEGACY_MODULE_ID_BY_NAME))).all()
     }
-    for name, module_id in module_id_by_name.items():
+    for name, module_id in LEGACY_MODULE_ID_BY_NAME.items():
         topic = legacy.get(name)
         if topic is not None:
             topic.module_id = modules[module_id].id
